@@ -12,7 +12,7 @@ WORKDIR /app
 COPY --from=builder /app/target/*.jar app.jar
 
 # Expone el puerto del microservicio
-EXPOSE 8082
+EXPOSE 8090
 
 # Comando para ejecutar Spring Boot
 ENTRYPOINT ["java", "-jar", "app.jar"]
