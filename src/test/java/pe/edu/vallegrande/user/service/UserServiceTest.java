@@ -8,6 +8,7 @@ import pe.edu.vallegrande.user.model.User;
 import pe.edu.vallegrande.user.repository.UsersRepository;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
+
 import static org.mockito.Mockito.*;
 
 public class UserServiceTest {
@@ -15,6 +16,7 @@ public class UserServiceTest {
     private UsersRepository usersRepository;
     private PasswordEncoder passwordEncoder;
     private EmailService emailService;
+    private SupabaseStorageService storageService; // ✅ nuevo mock
     private UserService userService;
 
     @BeforeEach
@@ -22,7 +24,9 @@ public class UserServiceTest {
         usersRepository = mock(UsersRepository.class);
         passwordEncoder = mock(PasswordEncoder.class);
         emailService = mock(EmailService.class);
-        userService = new UserService(usersRepository, passwordEncoder, emailService);
+        storageService = mock(SupabaseStorageService.class); // ✅ instanciar mock
+
+        userService = new UserService(usersRepository, passwordEncoder, emailService, storageService); // ✅ incluir
     }
 
     @Test
