@@ -42,3 +42,11 @@ firebase:
 logging:
   level:
     io.r2dbc: DEBUG
+
+supabase:
+  project-url: ${SUPABASE_PROJECT_URL}
+  api-key: ${SUPABASE_API_KEY}
+  bucket: ${SUPABASE_BUCKET}
+  folder: ${SUPABASE_FOLDER}
+
+

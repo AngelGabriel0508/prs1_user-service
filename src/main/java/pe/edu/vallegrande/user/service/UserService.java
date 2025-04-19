@@ -24,12 +24,16 @@ public class UserService {
     private final UsersRepository usersRepository;
     private final PasswordEncoder passwordEncoder;
     private final EmailService emailService;
+    private final SupabaseStorageService storageService;
+
 
     @Autowired
-    public UserService(UsersRepository usersRepository, PasswordEncoder passwordEncoder, EmailService emailService) {
+    public UserService(UsersRepository usersRepository, PasswordEncoder passwordEncoder,
+                       EmailService emailService, SupabaseStorageService storageService) {
         this.usersRepository = usersRepository;
         this.passwordEncoder = passwordEncoder;
         this.emailService = emailService;
+        this.storageService = storageService;
     }
 
     /**
@@ -50,33 +54,35 @@ public class UserService {
                             .flatMap(firebaseUser -> {
                                 String uid = firebaseUser.getUid();
 
-                                // 🔐 Asignar claim
+                                // Asignar claim
                                 String primaryRole = dto.getRole().isEmpty() ? "USER" : dto.getRole().get(0);
                                 return Mono.fromCallable(() -> {
                                     FirebaseAuth.getInstance().setCustomUserClaims(uid, Map.of("role", primaryRole.toUpperCase()));
-                                    System.out.println("✅ Claim de rol asignado: " + primaryRole);
                                     return uid;
                                 }).cast(String.class);
                             })
                             .flatMap(uid -> {
-                                // 🔄 Guardar en BD
-                                User user = new User();
-                                user.setFirebaseUid(uid);
-                                user.setName(dto.getName());
-                                user.setLastName(dto.getLastName());
-                                user.setDocumentType(dto.getDocumentType());
-                                user.setDocumentNumber(dto.getDocumentNumber());
-                                user.setCellPhone(dto.getCellPhone());
-                                user.setEmail(dto.getEmail());
-                                user.setPassword(passwordEncoder.encode(dto.getPassword()));
-                                user.setRole(dto.getRole());
-                                user.setProfileImage(dto.getProfileImage());
+                                // Subir imagen a Supabase
+                                return storageService.uploadBase64Image("users", dto.getProfileImage())
+                                        .flatMap(imageUrl -> {
+                                            // Guardar en BD
+                                            User user = new User();
+                                            user.setFirebaseUid(uid);
+                                            user.setName(dto.getName());
+                                            user.setLastName(dto.getLastName());
+                                            user.setDocumentType(dto.getDocumentType());
+                                            user.setDocumentNumber(dto.getDocumentNumber());
+                                            user.setCellPhone(dto.getCellPhone());
+                                            user.setEmail(dto.getEmail());
+                                            user.setPassword(passwordEncoder.encode(dto.getPassword()));
+                                            user.setRole(dto.getRole());
+                                            user.setProfileImage(imageUrl); // Guardar URL de la imagen
 
-                                return usersRepository.save(user)
-                                        .map(this::toDto)
-                                        .cast(UserDto.class);
+                                            return usersRepository.save(user)
+                                                    .map(this::toDto)
+                                                    .cast(UserDto.class);
+                                        });
                             });
-
                 })).cast(UserDto.class);
     }
 
@@ -87,7 +93,6 @@ public class UserService {
         return usersRepository.findById(id)
                 .switchIfEmpty(Mono.error(new IllegalArgumentException("Usuario no encontrado")))
                 .flatMap(existing -> {
-                    // Comparar roles para ver si cambiaron
                     boolean roleChanged = !existing.getRole().equals(dto.getRole());
 
                     // Actualizar campos editables
@@ -96,23 +101,26 @@ public class UserService {
                     existing.setDocumentType(dto.getDocumentType());
                     existing.setDocumentNumber(dto.getDocumentNumber());
                     existing.setCellPhone(dto.getCellPhone());
-                    existing.setProfileImage(dto.getProfileImage());
-                    existing.setRole(dto.getRole()); // igual lo actualizamos, luego vemos si toca claim
+                    existing.setRole(dto.getRole());
 
-                    return usersRepository.save(existing)
-                            .flatMap(updated -> {
-                                // Si cambió el rol, actualizamos el claim en Firebase
-                                if (roleChanged && updated.getFirebaseUid() != null) {
-                                    String primaryRole = updated.getRole().isEmpty() ? "USER" : updated.getRole().get(0);
-                                    return Mono.fromCallable(() -> {
-                                        FirebaseAuth.getInstance().setCustomUserClaims(updated.getFirebaseUid(), Map.of("role", primaryRole.toUpperCase()));
-                                        System.out.println("✅ Claim de rol actualizado: " + primaryRole);
-                                        return toDto(updated);
-                                    });
-                                } else {
-                                    return Mono.just(toDto(updated));
-                                }
-                            });
+                    // Si hay una nueva imagen de perfil
+                    if (!dto.getProfileImage().isEmpty()) {
+                        // Eliminar imagen anterior
+                        if (existing.getProfileImage() != null) {
+                            storageService.deleteImage(existing.getProfileImage()).subscribe();
+                        }
+                        // Subir nueva imagen
+                        return storageService.uploadBase64Image("users", dto.getProfileImage())
+                                .flatMap(imageUrl -> {
+                                    existing.setProfileImage(imageUrl); // Actualizar URL de la imagen
+                                    return usersRepository.save(existing)
+                                            .map(this::toDto);
+                                });
+                    } else {
+                        // Si no hay nueva imagen, solo guardamos
+                        return usersRepository.save(existing)
+                                .map(this::toDto);
+                    }
                 });
     }
 
@@ -158,18 +166,14 @@ public class UserService {
         return usersRepository.findById(id)
                 .switchIfEmpty(Mono.error(new RuntimeException("Usuario no encontrado")))
                 .flatMap(user -> {
-                    // 🔥 Eliminar en Firebase
-                    if (user.getFirebaseUid() != null) {
-                        return Mono.fromCallable(() -> {
-                            FirebaseAuth.getInstance().deleteUser(user.getFirebaseUid());
-                            System.out.println("✅ Usuario eliminado de Firebase: " + user.getFirebaseUid());
-                            return user;
-                        });
+                    // Eliminar imagen de Supabase
+                    if (user.getProfileImage() != null) {
+                        return storageService.deleteImage(user.getProfileImage())
+                                .then(usersRepository.deleteById(user.getId()));
                     } else {
-                        return Mono.just(user);
+                        return usersRepository.deleteById(user.getId());
                     }
-                })
-                .flatMap(user -> usersRepository.deleteById(user.getId()));
+                });
     }
 
     /**
